@@ -22,7 +22,6 @@ def save_history(video_id):
         f.write(f"{str(video_id)}\n")
 
 def get_nature_video():
-    """Fetches unique nature video and its tags"""
     used_ids = load_history()
     page = random.randint(1, 20)
     url = f"https://pixabay.com/api/videos/?key={PIXABAY_KEY}&q=nature&per_page=10&page={page}"
@@ -36,17 +35,14 @@ def get_nature_video():
             break
             
     if not selected_video:
-        print("Warning: Repeats possible, picking random.")
         selected_video = random.choice(hits)
 
     save_history(selected_video['id'])
     
-    # Extract Tags for caption
-    tags = selected_video.get('tags', 'nature, beauty')
+    # Tags fetch karna zaroori hai caption ke liye
+    tags = selected_video.get('tags', 'nature')
     
-    # Download Video
     download_url = selected_video['videos']['large']['url']
-    print(f"Downloading video ID: {selected_video['id']}...")
     v_content = requests.get(download_url).content
     with open("input_video.mp4", "wb") as f:
         f.write(v_content)
@@ -64,48 +60,38 @@ def get_nature_audio():
     audio_data = random.choice(results)
     download_url = audio_data['previews']['preview-hq-mp3']
     
-    print(f"Downloading audio: {audio_data['name']}...")
     a_content = requests.get(download_url).content
     with open("input_audio.mp3", "wb") as f:
         f.write(a_content)
     return "input_audio.mp3"
 
 def process_media(video_path, audio_path):
-    print("Processing: Converting to Shorts (9:16) & Trimming...")
+    print("Processing: 9:16 Crop & 7.5s Duration...")
     video_clip = VideoFileClip(video_path)
     audio_clip = AudioFileClip(audio_path)
 
-    # 1. Logic for 7-8 Seconds Duration
+    # Duration Logic
     target_duration = 7.5
     if video_clip.duration < 7:
          target_duration = video_clip.duration
     
-    # 2. Logic for YouTube Shorts (9:16 Aspect Ratio)
-    # Hamein width ko cut karna hoga taaki height wahi rahe
-    # Formula: New Width = Height * (9/16)
+    # 9:16 Vertical Crop Logic
     target_ratio = 9/16
     current_ratio = video_clip.w / video_clip.h
 
     if current_ratio > target_ratio:
-        # Landscape video hai, sides se crop karo
         new_width = int(video_clip.h * target_ratio)
         center_x = video_clip.w / 2
-        # Center Crop: (x1, y1, width, height)
         video_clip = video_clip.crop(
             x1=center_x - (new_width / 2),
             y1=0,
             width=new_width,
             height=video_clip.h
         )
-        print("Video cropped to 9:16 vertical format.")
     
-    # Resize to standard HD Shorts size (optional but good for consistency)
     video_clip = video_clip.resize(height=1280)
-
-    # Trim Time
     final_video = video_clip.subclip(0, target_duration)
     
-    # Audio Setup
     if audio_clip.duration < target_duration:
         from moviepy.audio.fx.all import audio_loop
         final_audio = audio_loop(audio_clip, duration=target_duration)
@@ -115,51 +101,73 @@ def process_media(video_path, audio_path):
     final_clip = final_video.set_audio(final_audio)
     
     output_filename = "final_output.mp4"
-    # 'preset=ultrafast' for speed on GitHub
     final_clip.write_videofile(output_filename, codec="libx264", audio_codec="aac", threads=4, preset='ultrafast')
     
     return output_filename
 
-def generate_caption(tags_string):
-    """Generates Title and Hashtags"""
-    tags = [t.strip() for t in tags_string.split(',')]
-    main_tag = tags[0].title() if tags else "Nature"
+def generate_nature_caption(tags_string):
+    """Generates Title and STRICT Nature Hashtags"""
     
-    # Simple Title
-    title = f"Peaceful {main_tag} Vibes 🌿"
+    # 1. Title Creation
+    raw_tags = [t.strip() for t in tags_string.split(',')]
+    main_subject = raw_tags[0].title() if raw_tags else "Nature"
     
-    # Hashtags
-    generic_hashtags = ["#shorts", "#nature", "#relaxing", "#peace", "#reels", "#fyp", "#viral", "#zen"]
-    video_hashtags = [f"#{t.replace(' ', '')}" for t in tags]
-    all_tags = list(set(video_hashtags + generic_hashtags))
-    
-    # Select 8
-    final_tags = random.sample(all_tags, min(8, len(all_tags)))
-    caption = f"{title}\n\n{' '.join(final_tags)}"
-    return caption
+    titles = [
+        f"Relaxing {main_subject} Moments 🌿",
+        f"Pure {main_subject} Vibes ✨",
+        f"Discovering {main_subject} 🍃",
+        f"Nature's Beauty: {main_subject} 🌍",
+        f"Serene {main_subject} View 🌧️"
+    ]
+    selected_title = random.choice(titles)
 
-def send_file_notifications(file_path, caption):
-    print("Uploading Video File directly...")
+    # 2. STRICT Nature Hashtags Only
+    # Humne saare 'viral', 'shorts' hata diye hain.
+    strict_nature_hashtags = [
+        "#nature", "#wildlife", "#forest", "#mountains", "#ocean", 
+        "#rain", "#sky", "#flowers", "#trees", "#landscape", 
+        "#earth", "#planet", "#river", "#sunrise", "#sunset", 
+        "#animals", "#wilderness", "#scenery", "#botany", "#green"
+    ]
     
-    # 1. Telegram Video Upload
+    # Video ke specific tags ko bhi hashtag banao
+    video_specific_hashtags = [f"#{t.replace(' ', '')}" for t in raw_tags if t.replace(' ', '').isalpha()]
+    
+    # Dono lists ko combine karo
+    all_nature_tags = list(set(video_specific_hashtags + strict_nature_hashtags))
+    
+    # Sirf 8 tags pick karo
+    final_tags = random.sample(all_nature_tags, min(8, len(all_nature_tags)))
+    
+    # 3. Final Caption String Join
+    # Format: Title + Newlines + Hashtags
+    caption_text = f"{selected_title}\n\n{' '.join(final_tags)}"
+    
+    return caption_text
+
+def send_file_notifications(file_path, caption_text):
+    print("Uploading Video File...")
+    print(f"Caption being sent:\n{caption_text}") # Log mein check karne ke liye
+
+    # 1. Telegram
     if TELEGRAM_TOKEN and TELEGRAM_CHAT_ID:
-        print("Sending to Telegram...")
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendVideo"
-        
-        # File open karke bhejna padta hai
         with open(file_path, 'rb') as video_file:
+            # Note: 'caption' parameter is crucial here
             files = {'video': video_file}
-            data = {'chat_id': TELEGRAM_CHAT_ID, 'caption': caption}
+            data = {'chat_id': TELEGRAM_CHAT_ID, 'caption': caption_text}
             requests.post(url, files=files, data=data)
 
-    # 2. Webhook Video Upload (Multipart)
+    # 2. Webhook
     if WEBHOOK_URL:
-        print("Sending to Webhook...")
-        # Note: Webhook must support file upload (like Make.com / n8n)
         with open(file_path, 'rb') as video_file:
-            # Bahut se webhook 'file' naam se data expect karte hain
             files = {'file': ('video.mp4', video_file, 'video/mp4')}
-            data = {'content': caption} # Content field for text
+            # Webhooks aksar 'content', 'caption', ya 'message' field dekhte hain
+            data = {
+                'content': caption_text,  # Discord/General
+                'caption': caption_text,  # Custom
+                'message': caption_text   # Custom
+            }
             try:
                 requests.post(WEBHOOK_URL, files=files, data=data)
             except Exception as e:
@@ -170,13 +178,11 @@ if __name__ == "__main__":
         v_path, v_tags = get_nature_video()
         a_path = get_nature_audio()
         
-        # Shorts Logic inside process_media
         final_video = process_media(v_path, a_path)
         
-        # Caption Logic
-        full_caption = generate_caption(v_tags)
+        # New Caption Logic
+        full_caption = generate_nature_caption(v_tags)
         
-        # Send File Logic
         send_file_notifications(final_video, full_caption)
         
         print("Workflow Completed Successfully!")
