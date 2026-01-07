@@ -1,6 +1,7 @@
 import os
 import requests
 import random
+import time
 from moviepy.editor import VideoFileClip, AudioFileClip
 
 # --- CONFIGURATION ---
@@ -22,7 +23,7 @@ def save_history(video_id):
         f.write(f"{str(video_id)}\n")
 
 def get_nature_video():
-    """Fetches unique nature video and its tags"""
+    """Fetches unique nature video"""
     used_ids = load_history()
     page = random.randint(1, 20)
     url = f"https://pixabay.com/api/videos/?key={PIXABAY_KEY}&q=nature&per_page=10&page={page}"
@@ -68,16 +69,16 @@ def get_nature_audio():
     return "input_audio.mp3"
 
 def process_media(video_path, audio_path):
-    print("Processing: Converting to Shorts (9:16) & Trimming...")
+    print("Processing: 9:16 Crop & 7.5s Duration...")
     video_clip = VideoFileClip(video_path)
     audio_clip = AudioFileClip(audio_path)
 
-    # 1. Duration Logic (7.5 Seconds)
+    # 1. Fix Duration (7.5s)
     target_duration = 7.5
     if video_clip.duration < 7:
          target_duration = video_clip.duration
     
-    # 2. 9:16 Crop Logic
+    # 2. Fix 9:16 Crop for Shorts
     target_ratio = 9/16
     current_ratio = video_clip.w / video_clip.h
 
@@ -107,8 +108,8 @@ def process_media(video_path, audio_path):
     
     return output_filename
 
-def generate_nature_caption(tags_string):
-    """Generates Title and Strict Nature Hashtags"""
+def generate_caption(tags_string):
+    """Generates Title & Hashtags"""
     raw_tags = [t.strip() for t in tags_string.split(',')]
     main_subject = raw_tags[0].title() if raw_tags else "Nature"
     
@@ -116,52 +117,48 @@ def generate_nature_caption(tags_string):
         f"Relaxing {main_subject} Moments 🌿",
         f"Pure {main_subject} Vibes ✨",
         f"Nature's Beauty: {main_subject} 🌍",
-        f"Serene {main_subject} View 🌧️",
-        f"Deep {main_subject} Peace 🍃"
+        f"Serene {main_subject} View 🌧️"
     ]
     title_text = random.choice(titles)
 
-    # STRICT Nature Hashtags Only
     nature_keywords = [
         "#nature", "#naturelovers", "#wildlife", "#forest", "#mountains", 
         "#ocean", "#rain", "#sky", "#flowers", "#trees", 
-        "#landscape", "#earth", "#river", "#sunrise", "#sunset", 
-        "#animals", "#wilderness", "#scenery", "#botany", "#green"
+        "#landscape", "#earth", "#river", "#green"
     ]
     
-    video_specific = []
-    for t in raw_tags:
-        clean = "".join(filter(str.isalnum, t))
-        if clean: video_specific.append(f"#{clean}")
-            
+    # Specific tags first
+    video_specific = [f"#{t.replace(' ', '')}" for t in raw_tags if t.replace(' ', '').isalpha()]
     pool = list(set(video_specific + nature_keywords))
     final_tags = random.sample(pool, min(8, len(pool)))
     
     return f"{title_text}\n\n{' '.join(final_tags)}"
 
 def upload_to_catbox(file_path):
-    """Uploads file to Catbox to get a Link for Make.com"""
-    print("Uploading to Catbox (for Webhook Link)...")
+    """Uploads to Catbox and returns URL"""
+    print("Uploading to Catbox...")
     url = "https://catbox.moe/user/api.php"
-    with open(file_path, "rb") as f:
-        payload = {'reqtype': 'fileupload'}
-        files = {'fileToUpload': f}
-        try:
+    try:
+        with open(file_path, "rb") as f:
+            payload = {'reqtype': 'fileupload'}
+            files = {'fileToUpload': f}
             response = requests.post(url, data=payload, files=files)
+            
             if response.status_code == 200:
-                return response.text # URL return karega
+                print(f"Catbox URL: {response.text}")
+                return response.text.strip()
             else:
-                print(f"Catbox Failed: {response.text}")
+                print(f"Catbox Error: {response.text}")
                 return None
-        except Exception as e:
-            print(f"Catbox Error: {e}")
-            return None
+    except Exception as e:
+        print(f"Catbox Connection Failed: {e}")
+        return None
 
-def send_hybrid_notifications(file_path, caption_text):
+def send_data(file_path, caption_text):
     
-    # 1. TELEGRAM: Send Direct File (Video Upload)
+    # 1. TELEGRAM (Sends File directly)
     if TELEGRAM_TOKEN and TELEGRAM_CHAT_ID:
-        print("Sending FILE to Telegram...")
+        print("Sending File to Telegram...")
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendVideo"
         with open(file_path, 'rb') as f:
             files = {'video': ('nature_shorts.mp4', f, 'video/mp4')}
@@ -169,26 +166,27 @@ def send_hybrid_notifications(file_path, caption_text):
             try:
                 requests.post(url, files=files, data=data)
             except Exception as e:
-                print(f"Telegram Error: {e}")
+                print(f"Telegram Failed: {e}")
 
-    # 2. MAKE.COM (WEBHOOK): Send Link + Caption (JSON)
+    # 2. WEBHOOK for Make.com (Sends Link)
     if WEBHOOK_URL:
-        # Pehle link generate karein
+        # Step A: Get Link from Catbox
         video_link = upload_to_catbox(file_path)
         
         if video_link:
-            print(f"Sending LINK to Make.com: {video_link}")
-            # JSON Data send karein
+            print(f"Sending LINK to Webhook: {video_link}")
+            # Step B: Send JSON Payload
             payload = {
                 "video_url": video_link,
                 "caption": caption_text,
                 "type": "shorts"
             }
             try:
-                requests.post(WEBHOOK_URL, json=payload)
-                print("Webhook sent successfully.")
+                # Use json=payload to send structured data
+                r = requests.post(WEBHOOK_URL, json=payload)
+                print(f"Webhook Status: {r.status_code}")
             except Exception as e:
-                print(f"Webhook Error: {e}")
+                print(f"Webhook Failed: {e}")
         else:
             print("Skipping Webhook because Catbox upload failed.")
 
@@ -196,14 +194,12 @@ if __name__ == "__main__":
     try:
         v_path, v_tags = get_nature_video()
         a_path = get_nature_audio()
-        
         final_video = process_media(v_path, a_path)
-        full_caption = generate_nature_caption(v_tags)
+        full_caption = generate_caption(v_tags)
         
-        # New Hybrid Function
-        send_hybrid_notifications(final_video, full_caption)
+        send_data(final_video, full_caption)
         
-        print("Workflow Completed Successfully!")
+        print("Workflow Completed!")
     except Exception as e:
-        print(f"Critical Error: {e}")
+        print(f"Error: {e}")
         exit(1)
